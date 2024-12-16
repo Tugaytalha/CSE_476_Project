@@ -17,6 +17,10 @@ from models import *
 from moviepy.editor import *
 from moviepy.video.tools.subtitles import SubtitlesClip
 from utils import *
+import sox
+import librosa
+import soundfile as sf
+from shutil import copyfile
 
 torch.manual_seed(0)
 torch.backends.cudnn.benchmark = False
@@ -410,7 +414,7 @@ def generate_recursively(audio_file, directory, speed, alpha, beta, diffusion_st
             with open(txt_file, 'r', encoding=file_encoding) as file:
                 content = file.read()
                 content = content.replace("-", " ")
-                output = generate_speech(audio_file, content, alpha, beta, diffusion_steps, embedding_scale)
+                output = generate_speech(audio_file, content, speed, alpha, beta, diffusion_steps, embedding_scale)
 
                 if output:
                     # Get the output file name with convert txt to mp3 and adding generated_voices to the path
@@ -482,10 +486,15 @@ def natural_keys(text):
 def correct_known_mistakes():
     # Huawei
     correct_mistaken_words()
-    # R&D
-    correct_mistaken_words(incorrect_words=["R and D"], correct_word="R&D")
-    # O&M
-    correct_mistaken_words(incorrect_words=["O and M"], correct_word="O&M")
+    # &
+    srt_file_path='./extracted/generated.srt'
+    with open(srt_file_path, "r") as file:
+        content = file.read()
+    content = re.sub(r'(?<=\b\w) and (?=\w\b)', '&', content)
+    
+    with open(srt_file_path, "w") as file:
+        file.write(content)
+    
     # Slash
     correct_mistaken_words(incorrect_words=["slash"], correct_word="/")
     # 6G
@@ -630,14 +639,11 @@ def correct_mistaken_words(file_path="extracted/generated_subtitle/concatenated.
     print("Mistaken words corrected successfully.")
 
 
-def create_video(folder_path="extracted", output_path="extracted/output_video.avi", font="Huawei-Sans-Bold",
+def create_video(folder_path="extracted", output_path="extracted/output_video.mp4", font="Huawei-Sans-Bold",
                  font_size=44):
     # Determine the number of files
     num_slides = len(os.listdir(f"{folder_path}/images/"))
     max_len = len(str(num_slides))
-
-    print(num_slides)
-    print(max_len)
 
     # List of images and corresponding audio files
     image_files = [f"{folder_path}/images/slide-{str(i).zfill(max_len)}.jpg" for i in range(1, num_slides + 1)]
@@ -652,8 +658,6 @@ def create_video(folder_path="extracted", output_path="extracted/output_video.av
     # List to hold the video clips
     video_clips = []
 
-    print(image_files)
-    print(audio_files)
     # Create video clips from images and corresponding audio
     for image, audio in zip(image_files, audio_files):
         try:
@@ -702,7 +706,7 @@ def create_video(folder_path="extracted", output_path="extracted/output_video.av
     # #     codec = "libx264"
 
     # Write the final output
-    final_video.write_videofile(output_path, fps=24, codec="mpeg4", threads=thread_count, audio_codec="aac")
+    final_video.write_videofile(output_path, fps=24, codec="libx264", threads=thread_count, audio_codec="aac")
 
 
 def generate_speech(audio_file, text_input, speed, alpha, beta, diffusion_steps, embedding_scale):
@@ -738,22 +742,52 @@ def generate_speech(audio_file, text_input, speed, alpha, beta, diffusion_steps,
             # Convert to 16-bit PCM
             synthesized_audio = (synthesized_audio * 32767).astype(np.int16)
 
-            # Speed up the audio
-            synthesized_audio_segment = AudioSegment(
-                synthesized_audio.tobytes(),
-                frame_rate=24000,
-                sample_width=synthesized_audio.dtype.itemsize,
-                channels=1
-            )
-            synthesized_audio_segment = synthesized_audio_segment.speedup(playback_speed=speed)
+            # Write the synthesized audio to a temp file
+            wavfile.write("temp.wav", 24000, synthesized_audio)
 
-            # Convert back to numpy array
-            synthesized_audio = np.array(synthesized_audio_segment.get_array_of_samples())
+            # Speed up with sox
+            if speed >= 1:
+                # Create a Transformer object
+                tfm = sox.Transformer()
+
+                # Set the tempo change (speed change)
+                tfm.tempo(speed)
+
+                # Apply the transformation and save the output file
+                tfm.build("temp.wav", "temp2.wav")
+
+                # Read back with pydub
+                synthesized_audio = AudioSegment.from_file("temp2.wav")
+            # Slow down with librosa
+            elif speed < 1:
+                # Load the audio file
+                y, sr = librosa.load("temp.wav", sr=None)  # sr=None ensures the original sampling rate is used
+
+                # Change the speed
+                y_fast = librosa.effects.time_stretch(y, rate=speed)
+
+                # Save the altered audio file
+                sf.write("temp2.wav", y_fast, sr)
+            # Just create temp2.wav
+            else:
+                # Copy the temp file
+                copyfile("temp.wav", "temp2.wav")
+
+            # Read back with pydub
+            synthesized_audio = AudioSegment.from_file("temp2.wav")
+
+            # Convert to numpy array
+            synthesized_audio = np.array(synthesized_audio.get_array_of_samples())
+
+            # Delete the temp file
+            os.remove("temp.wav")
+            os.remove("temp2.wav")
 
             return (24000, synthesized_audio), "Success: Speech generated successfully."
 
         return None, "Error: Audio file or text input is missing."
     except Exception as e:
+        print(e)
         return None, str(e)
 
 
