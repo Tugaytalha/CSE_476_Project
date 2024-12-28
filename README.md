@@ -1,4 +1,3 @@
-```markdown
 # NarraPhon: A Text-to-Speech System
 
 NarraPhon is a text-to-speech (TTS) project that leverages the power of StyleTTS2 and Whisper models to generate natural-sounding speech from text input. This README will guide you through setting up the necessary environment and running the project.
