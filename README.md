@@ -103,8 +103,10 @@ After completing the installation steps, you are now ready to use NarraPhon.
 **Example:**
 
 ```bash
-python run_tts.py --text "Hello, this is a test of the NarraPhon TTS system."
+python app.py
 ```
+
+After running the script, you should see the link to the local server and a live DNS where you can access the web interface.
 
 ## Troubleshooting
 
